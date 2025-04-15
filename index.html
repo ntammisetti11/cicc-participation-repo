@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Class Participation</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Roboto', sans-serif;
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            background: #ecf0f1;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 450px;
+            text-align: center;
+            transition: transform 0.3s ease-in-out;
+        }
+        .container:hover {
+            transform: scale(1.03);
+        }
+        h2 {
+            color: #e74c3c;
+            margin-bottom: 20px;
+            font-weight: 700;
+        }
+        label {
+            display: block;
+            text-align: left;
+            font-weight: 500;
+            margin-top: 12px;
+            color: #34495e;
+        }
+        input {
+            width: 100%;
+            padding: 12px;
+            margin-top: 5px;
+            border: 2px solid #bdc3c7;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        input:focus {
+            border-color: #e74c3c;
+            outline: none;
+            box-shadow: 0 0 8px rgba(231, 76, 60, 0.3);
+        }
+        button {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 12px;
+            width: 100%;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 15px;
+            transition: background 0.3s ease-in-out;
+        }
+        button:hover {
+            background: #c0392b;
+        }
+        #statusMessage {
+            margin-top: 15px;
+            font-weight: bold;
+            color: #34495e;
+        }
+        .participation-result {
+            margin-top: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            padding: 12px;
+            border-radius: 8px;
+            display: inline-block;
+            width: 100%;
+        }
+        .yes {
+            background: #2ecc71;
+            color: white;
+            border-left: 5px solid #27ae60;
+        }
+        .no {
+            background: #e74c3c;
+            color: white;
+            border-left: 5px solid #c0392b;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Class Participation</h2>
+        <form id="uploadForm">
+            <label for="name">Name:</label>
+            <input type="text" id="name" required>
+            <label for="email">Email:</label>
+            <input type="email" id="email" required>
+            <label for="classDate">Class Date:</label>
+            <input type="date" id="classDate" required>
+            <label for="fileInput">Upload Image:</label>
+            <input type="file" id="fileInput" accept="image/*" required>
+            <button type="submit">Upload & Process</button>
+        </form>
+        <p id="statusMessage"></p>
+        <p id="participation" class="participation-result"></p>
+    </div>
+</body>
+</html>
+
+
+    <script>
+        document.getElementById("uploadForm").addEventListener("submit", async function(event) {
+            event.preventDefault();  // Prevent page refresh
+
+            // Get user inputs
+            let name = document.getElementById("name").value;
+            let email = document.getElementById("email").value;
+            let classDate = document.getElementById("classDate").value;
+            let fileInput = document.getElementById("fileInput").files[0];
+
+            if (!fileInput) {
+                alert("Please select an image file.");
+                return;
+            }
+
+            document.getElementById("statusMessage").innerText = "Checking participation...";
+
+            try {
+                // Step 1: Request Pre-signed URL from Lambda
+                let presignResponse = await fetch("https://klz1cfad4d.execute-api.us-east-2.amazonaws.com/dev/process-image", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ getPresignedUrl: true, fileName: fileInput.name })
+                });
+
+                let presignResponseJson = await presignResponse.json();
+                let presignData = typeof presignResponseJson.body === "string" 
+                    ? JSON.parse(presignResponseJson.body) 
+                    : presignResponseJson.body;
+
+                if (!presignData.url) {
+                    console.error("Error: Presigned URL is missing from response");
+                    document.getElementById("statusMessage").innerText = "Error getting presigned URL.";
+                    return;
+                }
+
+                console.log("Presigned URL:", presignData.url);
+
+                // Step 2: Upload File to S3
+                await fetch(presignData.url, { method: "PUT", body: fileInput });
+
+                // Step 3: Send Image URL & User Data to Lambda for Processing
+                let s3Url = presignData.url.split("?")[0];  // Extract only the URL without query params
+
+                let processResponse = await fetch("https://383sd394ff.execute-api.us-east-2.amazonaws.com/dev/image_processing", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ 
+                        name: name,  
+                        email: email, 
+                        class_date: classDate, 
+                        s3_url: s3Url 
+                    })
+                });
+
+                let processResponseJson = await processResponse.json();
+                let processData = typeof processResponseJson.body === "string" 
+                    ? JSON.parse(processResponseJson.body) 
+                    : processResponseJson.body;
+
+                console.log("Processing Response:", processData);
+                let participationResult = document.getElementById("participation");
+
+                if (processData.participation) {
+                    participationResult.textContent = "Present";
+                    participationResult.className = "participation-result yes";
+                } else {
+                    participationResult.textContent = "Absent";
+                    participationResult.className = "participation-result no";
+                }
+
+                document.getElementById("statusMessage").innerText = "Processing Complete!";
+            } catch (error) {
+                console.error("Error:", error);
+                document.getElementById("statusMessage").innerText = "Error occurred. Check console.";
+            }
+        });
+    </script>
+</body>
+</html>
